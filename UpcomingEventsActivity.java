@@ -7,13 +7,21 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.Cursor;
 import android.os.Bundle;
+import android.os.Handler;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.ListView;
 import android.widget.Toast;
 
+import com.google.firebase.crashlytics.buildtools.reloc.org.apache.http.NameValuePair;
+import com.google.firebase.crashlytics.buildtools.reloc.org.apache.http.message.BasicNameValuePair;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
+import java.util.List;
 
 public class UpcomingEventsActivity extends AppCompatActivity {
     private ArrayList<Event> eventsList = new ArrayList<>();
@@ -80,6 +88,7 @@ public class UpcomingEventsActivity extends AppCompatActivity {
                         EventDB db = new EventDB(UpcomingEventsActivity.this);
                         db.deleteEvent(e.eventId);
                         db.close();
+                        deleteDataFromRemoteDB(e.eventId);
                         eventsList.remove(e);   // delete from the memory
                         adapter.notifyDataSetChanged(); // redraw the list view
                         Toast.makeText(getApplicationContext(), "Event has been deleted successfully", Toast.LENGTH_SHORT).show();
@@ -121,4 +130,104 @@ public class UpcomingEventsActivity extends AppCompatActivity {
         }
         adapter.notifyDataSetChanged();
     }
+
+    private void loadDataFromRemoteServer(){
+        try {
+            List<NameValuePair> params = new ArrayList<>();
+            params.add(new BasicNameValuePair("sid", "2021-3-60-000"));
+            params.add(new BasicNameValuePair("semester", "2025-1"));
+            params.add(new BasicNameValuePair("action", "restore"));
+            //Handler h = new Handler();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String dataFromServer = RemoteAccess.getInstance().makeHttpRequest(params);
+                    if(dataFromServer != null){
+                        try {
+                            JSONObject json = new JSONObject(dataFromServer);
+                            if(json.has("msg") && json.has("key-value")){
+                                String msg = json.getString("msg");
+                                if(msg != null && msg.equals("OK")){
+                                    JSONArray rows = json.getJSONArray("key-value");
+
+                                    // write code to store data in SQLite
+                                    EventDB db = new EventDB(UpcomingEventsActivity.this);
+
+                                    for(int i=0; i<rows.length(); i++){
+                                        String eventID = rows.getJSONObject(i).getString("key");
+                                        String value = rows.getJSONObject(i).getString("value");
+                                        JSONObject eventJson = new JSONObject(value);
+                                        String  title = eventJson.getString("title");
+                                        String  venue = eventJson.getString("venue");
+                                        long dateTime = eventJson.getLong("dateTime");
+                                        int  numParticipants = eventJson.getInt("numParticipants");
+                                        String  description = eventJson.getString("description");
+                                        if(doesEventExist(eventID)){
+                                            db.updateEvent(eventID, title, venue, dateTime, numParticipants, description);
+                                        } else{
+                                            db.insertEvent(eventID, title, venue, dateTime, numParticipants, description);
+                                        }
+                                    }
+                                    db.close();
+                                    loadDataFromSQLite();
+                                }
+//                                h.post(new Runnable() {
+//                                    @Override
+//                                    public void run() {
+//                                        Toast.makeText(UpcomingEventsActivity.this, msg, Toast.LENGTH_LONG).show();
+//                                    }
+//                                });
+                                return;
+                            }
+                        }catch (Exception e){}
+                    }
+                    System.out.println("Something went wrong");
+                }
+            }).start();
+        }catch (Exception e){}
+    }
+
+    private boolean doesEventExist(String eventId){
+        for (Event e: eventsList) {
+            if(e.eventId.equals(eventId)){
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void deleteDataFromRemoteDB(String eventID){
+        try {
+            List<NameValuePair> params = new ArrayList<>();
+            params.add(new BasicNameValuePair("sid", "2021-3-60-000"));
+            params.add(new BasicNameValuePair("semester", "2025-1"));
+            params.add(new BasicNameValuePair("key", eventID));
+            params.add(new BasicNameValuePair("action", "remove"));
+
+            Handler h = new Handler();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String dataFromServer = RemoteAccess.getInstance().makeHttpRequest(params);
+                    if(dataFromServer != null){
+                        try {
+                            JSONObject json = new JSONObject(dataFromServer);
+                            if(json.has("msg")){
+                                String msg = json.getString("msg");
+                                h.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Toast.makeText(UpcomingEventsActivity.this, msg, Toast.LENGTH_LONG).show();
+                                    }
+                                });
+                                return;
+                            }
+                        }catch (Exception e){}
+                    }
+                    System.out.println("Something went wrong");
+                }
+            }).start();
+        }catch (Exception e){}
+    }
+
 }
